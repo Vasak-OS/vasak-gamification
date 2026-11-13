@@ -1,0 +1,7 @@
+[D-BUS Service]
+# Normalmente ya corre como servicio de usuario; esto deja que Configuración o
+# un módulo emisor lo arranquen si le hablan antes de que
+# graphical-session.target haya llegado tan lejos.
+Name=ar.net.vasak.os.Gamification
+Exec=/usr/bin/vasak-gamification-service
+SystemdService=vasak-gamification-service.service

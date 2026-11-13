@@ -1,0 +1,12 @@
+[package]
+name = "vasak-gamification-protocol"
+description = "Contrato D-Bus compartido del servicio de gamificación de VasakOS"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+zbus.workspace = true

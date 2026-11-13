@@ -1,0 +1,46 @@
+[Unit]
+Description=Servicio de gamificación de VasakOS (XP, rachas y logros)
+Documentation=https://github.com/Vasak-OS/vasak-gamification
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/vasak-gamification-service
+Restart=on-failure
+RestartSec=3
+
+# Este servicio sólo lleva la cuenta de puntos y escribe un archivo JSON chico en
+# el directorio de datos del usuario; lee `vasak.conf` para saber si está
+# prendido. No necesita red, ni dispositivos, ni tocar nada del sistema, así que
+# se le saca todo lo demás.
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+# Habla con el bus de sesión por su socket de AF_UNIX, y nada más.
+RestrictAddressFamilies=AF_UNIX
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectClock=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# El servicio no genera código en memoria ni lanza nada que lo haga.
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+# `full` y no `strict`: deja /usr, /boot y /etc de sólo lectura —de donde
+# vendría un cambio persistente al sistema— pero deja escribir en la carpeta
+# personal, que es donde va el progreso.
+ProtectSystem=full
+
+[Install]
+WantedBy=graphical-session.target
