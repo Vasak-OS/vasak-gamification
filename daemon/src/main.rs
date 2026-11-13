@@ -20,6 +20,7 @@ mod gamification;
 mod service;
 mod store;
 
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -44,10 +45,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .init();
 
-    // El interruptor y la carpeta del progreso se leen una sola vez al arrancar:
-    // hoy no cambian en caliente (mismo límite conocido que tenía la capa dentro
-    // de health).
-    let enabled = gamification::read_gamification_config().enabled;
+    // El interruptor se lee de `vasak.conf` al arrancar y después `SetEnabled` lo
+    // cambia en caliente (por eso es atómico); la carpeta del progreso se lee una
+    // sola vez. El valor de arranque decide además si se carga el progreso de
+    // disco.
+    let enabled_at_start = gamification::read_gamification_config().enabled;
+    let enabled = Arc::new(AtomicBool::new(enabled_at_start));
     let dir = gamification::default_dir();
     match &dir {
         Some(dir) => import_legacy_if_empty(dir),
@@ -57,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Prendida, se carga el progreso de disco; apagada, se arranca en cero y no
     // se cuenta nada. El estado lo dueña el servicio en memoria y `main` guarda
     // una copia del `Arc` para persistir al salir.
-    let progress = if enabled {
+    let progress = if enabled_at_start {
         dir.as_deref().map(gamification::load).unwrap_or_default()
     } else {
         Progress::default()

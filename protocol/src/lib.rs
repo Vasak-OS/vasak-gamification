@@ -69,4 +69,12 @@ pub trait Gamification {
 
     /// Vacía el progreso: XP, racha y logros vuelven a cero.
     fn reset(&self) -> zbus::Result<()>;
+
+    /// Prende o apaga la capa en el acto, sin reiniciar. Quien lo llame también
+    /// debería persistir `gamification.enabled` en `vasak.conf`, que es de donde
+    /// el servicio y el emisor lo leen al arrancar.
+    fn set_enabled(&self, enabled: bool) -> zbus::Result<()>;
+
+    /// Si la capa está prendida ahora mismo.
+    fn enabled(&self) -> zbus::Result<bool>;
 }
