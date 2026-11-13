@@ -6,10 +6,11 @@
 //!
 //! El servicio **dueña el estado en memoria** (`Arc<Mutex<Progress>>`): cada
 //! `Emit` lo actualiza y lo guarda en el acto, de forma atómica, bajo el lock.
-//! El interruptor `enabled` se lee una vez al arrancar; hoy no cambia en
-//! caliente (mismo límite conocido que tenía la capa dentro de health).
+//! El interruptor `enabled` se lee al arrancar y se puede cambiar en caliente
+//! con `SetEnabled`, para que Configuración lo prenda o apague sin reiniciar.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -23,8 +24,9 @@ use crate::gamification::{self, award, points_for, Event, Progress};
 pub struct GamificationService {
     /// El progreso, en memoria y compartido con `main` (que lo guarda al salir).
     pub progress: Arc<Mutex<Progress>>,
-    /// Si la capa está prendida. Se lee una vez al arrancar.
-    pub enabled: bool,
+    /// Si la capa está prendida. Se lee al arrancar y `SetEnabled` la cambia en
+    /// caliente; por eso es atómica (los métodos de la interfaz toman `&self`).
+    pub enabled: Arc<AtomicBool>,
     /// Dónde vive el estado; `None` sin carpeta de datos.
     pub dir: Option<PathBuf>,
 }
@@ -39,7 +41,7 @@ impl GamificationService {
     /// forma atómica. No hay `.await` sostenido, así que no se bloquea el
     /// runtime más de lo que tarda ese renombre.
     fn emit(&self, kind: &str) {
-        if !self.enabled {
+        if !self.enabled.load(Ordering::Relaxed) {
             return;
         }
         // `kind` llega por el bus de sesión desde cualquier proceso: uno vacío o
@@ -61,7 +63,9 @@ impl GamificationService {
     /// El progreso: XP, racha y logros. Apagada la capa, `enabled` es `false` y
     /// el resto viene en cero.
     fn progress(&self) -> GamificationProgress {
-        self.progress.lock().report(self.enabled)
+        self.progress
+            .lock()
+            .report(self.enabled.load(Ordering::Relaxed))
     }
 
     /// Vacía el progreso: XP, racha y logros vuelven a cero. Se guarda el estado
@@ -70,6 +74,22 @@ impl GamificationService {
         let mut progress = self.progress.lock();
         *progress = Progress::default();
         self.persist(&progress);
+    }
+
+    /// Prende o apaga la capa en el acto: a partir de acá `Emit` cuenta o no.
+    ///
+    /// Sólo cambia el interruptor en memoria. Quien llame a esto además debe
+    /// persistir `gamification.enabled` en `vasak.conf` (lo hace Configuración con
+    /// el plugin de configuración): es de donde el servicio —y el emisor en
+    /// health— leen el estado al arrancar. Este método es el que lo hace
+    /// inmediato, sin esperar un reinicio.
+    fn set_enabled(&self, enabled: bool) {
+        self.enabled.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Si la capa está prendida ahora mismo.
+    fn enabled(&self) -> bool {
+        self.enabled.load(Ordering::Relaxed)
     }
 }
 
@@ -93,7 +113,7 @@ mod tests {
     fn servicio(enabled: bool, dir: &TempDir) -> GamificationService {
         GamificationService {
             progress: Arc::new(Mutex::new(Progress::default())),
-            enabled,
+            enabled: Arc::new(AtomicBool::new(enabled)),
             dir: Some(dir.0.clone()),
         }
     }
@@ -132,6 +152,38 @@ mod tests {
     }
 
     #[test]
+    fn set_enabled_prende_en_caliente() {
+        let temp = TempDir::new("servicio-prende-caliente");
+        let service = servicio(false, &temp);
+        service.emit("break");
+        assert_eq!(service.progress.lock().xp, 0);
+        service.set_enabled(true);
+        assert!(service.enabled());
+        service.emit("break");
+        assert_eq!(service.progress.lock().xp, u64::from(points_for("break")));
+    }
+
+    #[test]
+    fn set_enabled_apaga_en_caliente() {
+        let temp = TempDir::new("servicio-apaga-caliente");
+        let service = servicio(true, &temp);
+        service.emit("break");
+        let xp = service.progress.lock().xp;
+        assert!(xp > 0);
+        service.set_enabled(false);
+        assert!(!service.enabled());
+        service.emit("break");
+        assert_eq!(service.progress.lock().xp, xp);
+    }
+
+    #[test]
+    fn enabled_refleja_el_estado_inicial() {
+        let temp = TempDir::new("servicio-enabled-estado");
+        assert!(servicio(true, &temp).enabled());
+        assert!(!servicio(false, &temp).enabled());
+    }
+
+    #[test]
     fn reset_vacia_el_progreso_y_lo_guarda() {
         let temp = TempDir::new("servicio-reset");
         let service = servicio(true, &temp);
@@ -148,7 +200,7 @@ mod tests {
     fn sin_carpeta_de_datos_emit_sigue_sumando_en_memoria() {
         let service = GamificationService {
             progress: Arc::new(Mutex::new(Progress::default())),
-            enabled: true,
+            enabled: Arc::new(AtomicBool::new(true)),
             dir: None,
         };
         service.emit("hydration");
